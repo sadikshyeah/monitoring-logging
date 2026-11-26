@@ -11,12 +11,36 @@ services:
     ports:
       # only listen on localhost for added security.
       # remove 127.0.0.1 to listen on all interfaces.
-      - 127.0.0.1:5432:5432
+      # host port 5434 to avoid conflict with a local Postgres on 5432
+      - 127.0.0.1:5434:5432
+    healthcheck:
+      # pg_isready exits 0 once Postgres accepts connections.
+      # -h 127.0.0.1 forces a TCP check: during first-time init Postgres runs a
+      # temporary server on a Unix socket only, which must not count as "ready".
+      # $$ = use the variable from inside the container (passed via env_file).
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DATABASE}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   app:
     build: ./app
     container_name: app
     env_file: .env
+    depends_on:
+      postgres:
+        # wait until the healthcheck above passes, not just until the container starts
+        condition: service_healthy
+    healthcheck:
+      # /artists needs a database connection, so it fails when the pool is exhausted.
+      # --fail: non-2xx status = failure. --max-time: give up if no response
+      # (without it, curl would wait forever on the stuck app).
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "--max-time", "3", "http://localhost:3333/artists"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     ports:
       # only listen on localhost for added security.
       # remove 127.0.0.1 to listen on all interfaces.

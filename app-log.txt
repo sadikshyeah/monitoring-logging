@@ -1,1 +1,44 @@
-This file is a placeholder for app log messages, which you need to modify during the exercise.
+Root cause: database connections are leaked on failed requests.
+
+Successful requests log both "Connecting to database..." and
+"Releasing database connection...". Requests for a non-existent artist id
+throw a TypeError before release(conn) is called, so the database connection
+is never returned to the pool. After 10 such requests (the pool size) all
+connections are used up, and every request that needs the database hangs.
+The "/" route keeps working because it does not use the database.
+
+----- Working requests: connection is acquired AND released -----
+<-- GET /artists/1
+Connecting to database...
+Releasing database connection...
+--> GET /artists/1 200 209ms
+<-- GET /artists/50
+Connecting to database...
+Releasing database connection...
+--> GET /artists/50 200 2ms
+
+----- Failing request: connection is acquired but NEVER released -----
+<-- GET /artists/999991
+Connecting to database...
+Error while getting artist by id 999991 TypeError: Cannot read properties of undefined (reading 'artist_id')
+--> GET /artists/999991 500 14ms
+<-- GET /artists
+Connecting to database...
+Releasing database connection...
+--> GET /artists 200 28ms
+
+... same pattern repeated for ids 999992 - 999999 ...
+
+----- 10th failing request: last free connection leaked -----
+<-- GET /artists/9999910
+Connecting to database...
+Error while getting artist by id 9999910 TypeError: Cannot read properties of undefined (reading 'artist_id')
+--> GET /artists/9999910 500 2ms
+
+----- Application is now unresponsive: requests wait forever for a connection -----
+<-- GET /artists
+Connecting to database...
+<-- GET /
+--> GET / 200 0ms
+<-- GET /artists/1
+Connecting to database...
